@@ -1,1 +1,1 @@
-fecha,circuito,neumatico,temperatura,riesgo,litros_vuelta_real,desgaste_real,notas
+fecha,circuito,compuesto,temperatura,riesgo_pista_limpia,riesgo_adelantar,riesgo_defender,consumo_real_l_vuelta,desgaste_real_pct_vuelta,notas

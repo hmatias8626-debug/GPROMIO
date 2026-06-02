@@ -1,6 +1,6 @@
 # GPROMIO - GPRO Manager Tools
 
-App en Streamlit para calcular combustible de Q2, combustible total, estrategia de paradas y estimación inicial de neumáticos.
+App en Streamlit para estimar combustible, stints y desgaste de neumáticos en GPRO.
 
 ## Ejecutar local
 
@@ -9,6 +9,13 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Versión
+## Funciones
 
-v3: mejora la lectura del calendario público de GPRO Tools y agrega fallback local para Silverstone.
+- Carga de datos públicos del circuito.
+- Corrección manual de datos.
+- Cálculo editable de consumo por vuelta.
+- Cálculo editable de desgaste de neumáticos por stint.
+- Reparto automático o manual de vueltas por stint.
+- Combustible recomendado para Q2.
+
+> Las fórmulas son aproximadas y calibrables. No replican fórmulas privadas de GPRO Tools.
