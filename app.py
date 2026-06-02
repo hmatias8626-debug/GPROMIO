@@ -1,206 +1,132 @@
+
 import streamlit as st
 import pandas as pd
-
-from gpro_model import (
-    TYRE_TYPES,
-    TYRE_BRANDS,
-    load_tracks,
-    get_track,
-    calc_fuel_l_per_km,
-    calc_tyre_max_km,
-    calc_strategy,
-    recommended_strategy_rows,
+from calculos import (
+    get_track, track_summary, fuel_per_lap, tyre_max_laps, stint_rows,
+    auto_split_laps, strategy_comparison, setup_calc, parts_wear
 )
 
-st.set_page_config(page_title="GPROMIO", layout="wide")
+st.set_page_config(page_title="GPROMIO", page_icon="🏎️", layout="wide")
 
-st.title("🏎️ GPROMIO - Estrategia GPRO")
-st.caption("Motor de cálculo basado en el Excel GPRO Version 6: combustible, stints y desgaste de neumáticos.")
+@st.cache_data
+def load_tracks():
+    return pd.read_csv("data/tracks.csv")
 
-tracks = load_tracks()
-track_names = [t["name"] for t in tracks]
+tracks_df = load_tracks()
+track_names = tracks_df["Name"].dropna().astype(str).tolist()
 
-with st.sidebar:
-    st.header("Circuito")
-    default_idx = track_names.index("Silverstone") if "Silverstone" in track_names else 0
-    track_name = st.selectbox("Circuito", track_names, index=default_idx)
-    track = get_track(track_name, tracks)
+st.sidebar.title("GPROMIO")
+track_name = st.sidebar.selectbox("Circuito", track_names, index=track_names.index("Silverstone") if "Silverstone" in track_names else 0)
+track = get_track(tracks_df, track_name)
 
-    st.markdown("---")
-    st.header("Clima")
-    weather = st.selectbox("Condición", ["Dry", "Wet"], index=0)
-    avg_temp = st.number_input("Temperatura media carrera °C", min_value=0.0, max_value=60.0, value=20.0, step=0.5)
-    humidity = st.number_input("Humedad % (informativo)", min_value=0.0, max_value=100.0, value=20.0, step=1.0)
-
-    st.markdown("---")
-    st.header("Piloto")
-    concentration = st.number_input("Concentración", min_value=0, max_value=250, value=81)
-    aggressiveness = st.number_input("Agresividad", min_value=0, max_value=250, value=151)
-    experience = st.number_input("Experiencia", min_value=0, max_value=250, value=27)
-    technical = st.number_input("Conocimiento técnico", min_value=0, max_value=250, value=134)
-    weight = st.number_input("Peso piloto kg", min_value=40, max_value=130, value=77)
-
-    st.markdown("---")
-    st.header("Auto")
-    engine_level = st.number_input("Nivel motor", min_value=1, max_value=11, value=3)
-    electronics_level = st.number_input("Nivel electrónica", min_value=1, max_value=11, value=2)
-    suspension_level = st.number_input("Nivel suspensión", min_value=1, max_value=11, value=2)
-
-    st.markdown("---")
-    st.header("Riesgos / Neumáticos")
-    ct_risk = st.number_input("Riesgo CT", min_value=0, max_value=100, value=0, step=5)
-    tyre_brand = st.selectbox("Marca neumáticos", TYRE_BRANDS, index=TYRE_BRANDS.index("Pipirelli"))
-    tyre_type = st.selectbox("Compuesto", TYRE_TYPES, index=TYRE_TYPES.index("Soft"))
-    target_wear = st.slider("Reemplazar neumático al llegar a % restante", 0, 40, 15)
-    fuel_margin = st.number_input("Margen combustible por stint (L)", min_value=0.0, max_value=20.0, value=2.0, step=0.5)
-
-inputs = {
-    "weather": weather,
-    "avg_temp": avg_temp,
-    "humidity": humidity,
-    "concentration": concentration,
-    "aggressiveness": aggressiveness,
-    "experience": experience,
-    "technical": technical,
-    "weight": weight,
-    "engine_level": engine_level,
-    "electronics_level": electronics_level,
-    "suspension_level": suspension_level,
-    "ct_risk": ct_risk,
-    "tyre_brand": tyre_brand,
-    "tyre_type": tyre_type,
-    "target_wear": target_wear,
-    "fuel_margin": fuel_margin,
+st.sidebar.header("Piloto")
+driver = {
+    "concentration": st.sidebar.number_input("Concentración", 0, 250, 81),
+    "talent": st.sidebar.number_input("Talento", 0, 250, 27),
+    "aggressiveness": st.sidebar.number_input("Agresividad", 0, 250, 151),
+    "experience": st.sidebar.number_input("Experiencia", 0, 250, 29),
+    "technical": st.sidebar.number_input("Conocimiento técnico", 0, 250, 136),
+    "weight": st.sidebar.number_input("Peso", 40, 120, 77),
 }
 
-fuel_l_km = calc_fuel_l_per_km(track, inputs)
-fuel_lap = fuel_l_km * track["lap_length"]
-tyre_max_km = calc_tyre_max_km(track, inputs)
-tyre_max_laps_0 = tyre_max_km / track["lap_length"]
-tyre_max_laps_target = tyre_max_laps_0 * (100 - target_wear) / 100
+st.sidebar.header("Auto")
+parts = ["chassis","engine","front_wing","rear_wing","underbody","sidepods","cooling","gearbox","brakes","suspension","electronics"]
+labels = {"chassis":"Chasis","engine":"Motor","front_wing":"Alerón delantero","rear_wing":"Alerón trasero","underbody":"Fondo plano","sidepods":"Pontones","cooling":"Refrigeración","gearbox":"Caja","brakes":"Frenos","suspension":"Suspensión","electronics":"Electrónica"}
+levels = {}
+wears = {}
+with st.sidebar.expander("Niveles y uso de piezas", expanded=False):
+    for p in parts:
+        c1,c2=st.columns(2)
+        levels[p] = c1.number_input(f"Nivel {labels[p]}",1,9,3 if p=="engine" else 2,key=f"lvl_{p}")
+        wears[p] = c2.number_input(f"Uso % {labels[p]}",0,99,31 if p=="gearbox" else 0,key=f"wear_{p}")
+car = {"engine":levels["engine"],"electronics":levels["electronics"],"suspension":levels["suspension"]}
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Vueltas", int(track["laps"]))
-c2.metric("Distancia", f'{track["distance"]:.1f} km')
-c3.metric("Consumo estimado", f"{fuel_lap:.2f} L/vuelta")
-c4.metric("Durabilidad neumático", f"{tyre_max_laps_target:.1f} vueltas útiles")
+st.sidebar.header("Clima / Riesgos")
+weather = st.sidebar.selectbox("Clima", ["Dry", "Wet"], index=0)
+avg_temp = st.sidebar.number_input("Temperatura media", -20, 60, 17)
+humidity = st.sidebar.number_input("Humedad media", 0, 100, 25)
+ct_risk = st.sidebar.number_input("Riesgo CT", 0, 100, 0)
+tyre_replace_at = st.sidebar.slider("Cambiar neumático al llegar a % restante",0,60,15)
+margin_l = st.sidebar.number_input("Margen combustible por stint (L)",0.0,20.0,2.0,0.5)
 
-with st.expander("Datos del circuito", expanded=True):
-    st.write(
-        {
-            "Circuito": track["name"],
-            "Downforce": track["downforce"],
-            "Overtaking": track["overtaking"],
-            "Fuel": track["fuel_label"],
-            "Tyre wear": track["tyre_wear_label"],
-            "Lap length": track["lap_length"],
-            "Pit I/O": track["pit_io"],
-            "P/H/A": f'{track["p"]}/{track["h"]}/{track["a"]}',
-            "Grip": track["grip"],
-        }
-    )
+st.sidebar.header("Neumáticos")
+brand = st.sidebar.selectbox("Marca", ["Pipirelli","Avonn","Yokomama","Dunnolop","Contimental","Badyear"])
+compound = st.sidebar.selectbox("Compuesto", ["Extra Soft","Soft","Medium","Hard","Rain"], index=1)
 
-tab1, tab2, tab3 = st.tabs(["Estrategia editable", "Comparador automático", "Modelo usado"])
+st.title("🏎️ GPROMIO - Estrategia GPRO")
+st.caption("Basado en las fórmulas/tablas del Excel GPRO Version 6 que pasaste. No es fórmula oficial publicada por GPRO.")
 
-with tab1:
+col1,col2,col3,col4=st.columns(4)
+col1.metric("Vueltas", int(track.get("Laps")))
+col2.metric("Distancia", f'{float(track.get("Distance")):.1f} km')
+col3.metric("Consumo", f'{fuel_per_lap(track, driver, car, weather):.2f} L/vuelta')
+col4.metric("Durabilidad neumático", f'{tyre_max_laps(track, driver, car, brand, compound, avg_temp, ct_risk, weather):.1f} vueltas útiles')
+
+menu = st.tabs(["🏁 Circuito", "🔧 Setup", "⛽ Estrategia", "🛞 Neumáticos", "🧩 Piezas", "📊 Comparador", "📚 Modelo"])
+
+with menu[0]:
+    st.subheader("Datos del circuito")
+    st.dataframe(pd.DataFrame(track_summary(track).items(), columns=["Dato","Valor"]), use_container_width=True, hide_index=True)
+    with st.expander("Ver fila completa del circuito"):
+        st.json({k:(None if pd.isna(v) else v) for k,v in track.items()})
+
+with menu[1]:
+    st.subheader("Setup recomendado")
+    st.write("Calculado desde bases del circuito + temperatura + piloto + niveles/uso del auto.")
+    setup_df=setup_calc(track, driver, levels, wears, avg_temp, humidity, weather)
+    st.dataframe(setup_df, use_container_width=True, hide_index=True)
+    st.info("Usalo como punto de partida. En práctica ajustá con los comentarios del piloto.")
+
+with menu[2]:
     st.subheader("Stints editables")
-    st.write("Modificá las vueltas de cada stint y GPROMIO recalcula combustible y desgaste al instante.")
-
-    total_laps = int(track["laps"])
-    stops = st.selectbox("Cantidad de paradas", [0, 1, 2, 3, 4], index=2)
-    stints_count = stops + 1
-
-    suggested = [total_laps // stints_count] * stints_count
-    for i in range(total_laps % stints_count):
-        suggested[i] += 1
-
-    cols = st.columns(stints_count)
-    stint_laps = []
-    for i in range(stints_count):
-        with cols[i]:
-            val = st.number_input(
-                f"Stint {i+1} vueltas",
-                min_value=0,
-                max_value=total_laps,
-                value=int(suggested[i]),
-                step=1,
-                key=f"stint_{i}",
-            )
-            stint_laps.append(int(val))
-
-    strategy = calc_strategy(track, inputs, stint_laps)
-
-    st.warning(f"Vueltas cargadas: {sum(stint_laps)} / {total_laps}") if sum(stint_laps) != total_laps else st.success("La suma de stints coincide con la carrera.")
-
-    df = pd.DataFrame(strategy["stints"])
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    q2_fuel = strategy["stints"][0]["Combustible recomendado (L)"] if strategy["stints"] else 0
-    total_fuel = strategy["total_fuel"]
-    worst_tyre = min([s["Neumático final (%)"] for s in strategy["stints"] if isinstance(s["Neumático final (%)"], (int, float))], default=100)
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Q2 / combustible inicial", f"{q2_fuel:.0f} L")
-    k2.metric("Combustible total carrera", f"{total_fuel:.0f} L")
-    k3.metric("Peor neumático final", f"{worst_tyre:.1f}%")
-
-    if worst_tyre < 0:
-        st.error("Algún stint supera la vida estimada del neumático. Esa estrategia no conviene.")
-    elif worst_tyre < 10:
-        st.warning("Estrategia riesgosa: quedás con menos de 10% en al menos un stint.")
-    elif worst_tyre < 20:
-        st.info("Estrategia posible, pero con margen bajo de neumáticos.")
+    total_laps=int(track.get("Laps"))
+    stops=st.selectbox("Cantidad de paradas", [0,1,2,3,4], index=2)
+    default_laps=auto_split_laps(total_laps, stops)
+    cols=st.columns(5)
+    stint_laps=[]
+    for i in range(5):
+        default=default_laps[i] if i < len(default_laps) else 0
+        stint_laps.append(cols[i].number_input(f"Stint {i+1} vueltas",0,total_laps,default,key=f"stint_{i}"))
+    loaded=sum(stint_laps)
+    if loaded == total_laps:
+        st.success("La suma de stints coincide con la carrera.")
     else:
-        st.success("Estrategia segura por neumáticos según este modelo.")
+        st.warning(f"Vueltas cargadas: {loaded} / {total_laps}")
+    rows=stint_rows(track, driver, car, stint_laps, brand, compound, avg_temp, ct_risk, weather, margin_l, tyre_replace_at)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    if rows:
+        c1,c2,c3=st.columns(3)
+        c1.metric("Q2 / combustible inicial", f'{rows[0]["Combustible recomendado (L)"]} L')
+        c2.metric("Combustible total carrera", f'{sum(r["Combustible recomendado (L)"] for r in rows)} L')
+        c3.metric("Peor neumático final", f'{min(r["Neumático final (%)"] for r in rows):.1f}%')
 
-with tab2:
-    st.subheader("Comparador automático")
-    rows = recommended_strategy_rows(track, inputs, max_stops=4)
-    comp = pd.DataFrame(rows)
-    st.dataframe(comp, use_container_width=True, hide_index=True)
+with menu[3]:
+    st.subheader("Cálculo de neumáticos")
+    max_laps=tyre_max_laps(track, driver, car, brand, compound, avg_temp, ct_risk, weather)
+    max_km=max_laps*float(track.get("Lap Length"))
+    st.metric("Durabilidad estimada", f"{max_laps:.1f} vueltas / {max_km:.1f} km")
+    test_laps=st.slider("Probar stint de vueltas",1,int(track.get("Laps")),min(20,int(track.get("Laps"))))
+    rows=stint_rows(track, driver, car, [test_laps], brand, compound, avg_temp, ct_risk, weather, margin_l, tyre_replace_at)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-with tab3:
-    st.subheader("Qué está calculando")
-    st.markdown(
-        f"""
-**Combustible**
+with menu[4]:
+    st.subheader("Desgaste estimado de piezas")
+    pw=parts_wear(track, driver, levels, wears, ct_risk)
+    st.dataframe(pd.DataFrame(pw), use_container_width=True, hide_index=True)
 
-Se usa la lógica del Excel:
+with menu[5]:
+    st.subheader("Comparador automático de estrategias")
+    comp=strategy_comparison(track, driver, car, brand, compound, avg_temp, ct_risk, weather, margin_l, tyre_replace_at, 4)
+    st.dataframe(pd.DataFrame(comp), use_container_width=True, hide_index=True)
 
-`L/km = Fuel 2 Base del circuito + ajuste piloto/auto`
+with menu[6]:
+    st.subheader("Qué replica esta versión")
+    st.markdown("""
+    - **Tracks:** datos completos del circuito desde la hoja `Tracks`.
+    - **Fuel:** usa `L/km` + ajuste por concentración, agresividad, experiencia, técnica, motor y electrónica.
+    - **Tyres:** usa `Wear Base`, compuesto, marca, temperatura, suspensión, agresividad, experiencia, peso y riesgo CT.
+    - **Setup:** usa bases de pista, clima, piloto, niveles y desgaste del auto.
+    - **Parts wear:** usa base de desgaste de pista, nivel de pieza, riesgo CT y factores del piloto.
 
-Ajustes considerados:
-- Concentración
-- Agresividad
-- Experiencia
-- Conocimiento técnico
-- Nivel de motor
-- Nivel de electrónica
-
-**Neumáticos**
-
-Se usa la lógica del Excel:
-
-`Km máximos = BaseWear × TyreBaseCircuito × ProductoDeFactores`
-
-Factores considerados:
-- Tyre wear del circuito
-- Temperatura media
-- Marca de neumático
-- Compuesto
-- Nivel de suspensión
-- Agresividad
-- Experiencia
-- Peso
-- CT risk
-
-**Valores actuales**
-- Fuel base circuito: `{track["base_l_km_dry"] if weather == "Dry" else track["base_l_km_wet"]:.4f} L/km`
-- Fuel final: `{fuel_l_km:.4f} L/km`
-- Fuel por vuelta: `{fuel_lap:.2f} L`
-- Tyre max hasta 0%: `{tyre_max_laps_0:.1f} vueltas`
-- Tyre útil hasta {target_wear}% restante: `{tyre_max_laps_target:.1f} vueltas`
-        """
-    )
-
-st.caption("Ojo: esto reproduce la lógica del Excel que pasaste, no una fórmula oficial publicada por GPRO.")
+    Si algo no coincide con el Excel, lo ajustamos celda por celda, pero esta versión ya no tiene el bug que imprimía objetos internos de Streamlit.
+    """)
