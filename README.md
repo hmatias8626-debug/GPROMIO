@@ -1,14 +1,6 @@
-# GPROMIO
+# GPROMIO - GPRO Manager Tools
 
-Herramienta personal para GPRO.
-
-## Funciones actuales
-
-- Lee datos públicos del calendario de GPRO Tools.
-- Busca circuito por nombre.
-- Calcula combustible total y combustible recomendado para Q2.
-- Divide estrategia por stints según cantidad de paradas.
-- Estima desgaste de neumáticos por stint con un modelo propio inicial.
+App en Streamlit para calcular combustible de Q2, combustible total, estrategia de paradas y estimación inicial de neumáticos.
 
 ## Ejecutar local
 
@@ -17,10 +9,6 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy
+## Versión
 
-En Streamlit Cloud:
-
-- Repository: `hmatias8626-debug/GPROMIO`
-- Branch: `main`
-- Main file path: `app.py`
+v3: mejora la lectura del calendario público de GPRO Tools y agrega fallback local para Silverstone.

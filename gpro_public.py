@@ -7,115 +7,182 @@ from bs4 import BeautifulSoup
 
 URL_CALENDARIO = "https://gpro-tools.eu/en/season-calendar"
 
+# Fallback mínimo para que la app no quede con None si GPRO Tools cambia el HTML
+# o Streamlit no puede leer toda la página. Lo vamos ampliando con cada carrera.
+FALLBACK_CIRCUITOS = {
+    "silverstone": {
+        "round": 16,
+        "track": "Silverstone",
+        "country": "United Kingdom",
+        "date": "02.06.2026",
+        "distance_km": 308.3,
+        "laps": 60,
+        "lap_km": 5.138,
+        "avg_speed": 225.46,
+        "corners": 14,
+        "pit_time_s": 22.5,
+        "power": 11,
+        "handling": 11,
+        "acceleration": 16,
+        "downforce": "Low",
+        "overtaking": "Normal",
+        "rigidity": "Medium",
+        "fuel": "High",
+        "tyre": "Low",
+        "grip": "Medium",
+    },
+}
 
-def _normalizar_lineas(html: str) -> list[str]:
+
+def _normalizar_texto(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     texto = soup.get_text("\n", strip=True)
-    return [x.strip() for x in texto.splitlines() if x.strip()]
+    # Compacta espacios pero conserva saltos para separar bloques.
+    texto = re.sub(r"[ \t]+", " ", texto)
+    texto = re.sub(r"\n{2,}", "\n", texto)
+    return texto.strip()
 
 
-def _valor_despues(lineas: list[str], etiqueta: str, inicio: int, max_salto: int = 4) -> str | None:
-    for j in range(inicio, min(len(lineas), inicio + max_salto + 1)):
-        if lineas[j].lower() == etiqueta.lower() and j + 1 < len(lineas):
-            return lineas[j + 1]
-    return None
+def _compactar(texto: str) -> str:
+    return re.sub(r"\s+", " ", texto).strip()
 
 
-def _extraer_float(texto: str | None) -> float | None:
-    if not texto:
+def _extraer_num(label: str, texto: str, entero: bool = False) -> int | float | None:
+    # Soporta: "Distance 308.3", "PIT time 22.5 s", etc.
+    patron = rf"{re.escape(label)}\s+(-?\d+(?:[\.,]\d+)?)"
+    m = re.search(patron, texto, flags=re.IGNORECASE)
+    if not m:
         return None
-    m = re.search(r"\d+(?:\.\d+)?", texto.replace(",", "."))
-    return float(m.group()) if m else None
+    valor = float(m.group(1).replace(",", "."))
+    return int(valor) if entero else valor
 
 
-def _extraer_laps(texto: str | None) -> tuple[int | None, float | None]:
-    if not texto:
-        return None, None
-    m = re.search(r"(\d+)\s*x\s*(\d+(?:\.\d+)?)", texto)
+def _extraer_laps(texto: str) -> tuple[int | None, float | None]:
+    m = re.search(r"Laps\s+(\d+)\s*x\s*(\d+(?:[\.,]\d+)?)", texto, flags=re.IGNORECASE)
     if not m:
         return None, None
-    return int(m.group(1)), float(m.group(2))
+    return int(m.group(1)), float(m.group(2).replace(",", "."))
+
+
+def _extraer_categoria(label: str, texto: str) -> str | None:
+    valores = [
+        "Very low", "Low", "Medium", "High", "Very high",
+        "Very easy", "Easy", "Normal", "Hard", "Very hard", "Soft",
+    ]
+    patron = rf"{re.escape(label)}\s+({'|'.join(re.escape(v) for v in valores)})"
+    m = re.search(patron, texto, flags=re.IGNORECASE)
+    if not m:
+        return None
+    encontrado = m.group(1).lower()
+    for v in valores:
+        if v.lower() == encontrado:
+            return v
+    return m.group(1)
+
+
+def _extraer_texto_despues(label: str, texto: str) -> str:
+    patron = rf"{re.escape(label)}\s+([^\n]+)"
+    m = re.search(patron, texto, flags=re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+def _parsear_bloque(bloque: str) -> dict[str, Any] | None:
+    lineas = [x.strip() for x in bloque.splitlines() if x.strip()]
+    if not lineas:
+        return None
+
+    # Ronda
+    m_round = re.match(r"#\s*(\d+|Test)", lineas[0], flags=re.IGNORECASE)
+    if not m_round:
+        return None
+    ronda_txt = m_round.group(1)
+    ronda = int(ronda_txt) if ronda_txt.isdigit() else ronda_txt
+
+    # En el calendario de GPRO Tools, el nombre suele venir en la línea siguiente.
+    track = lineas[1] if len(lineas) > 1 else ""
+
+    # País: suele aparecer antes de la palabra GPRO.
+    country = ""
+    for idx, linea in enumerate(lineas):
+        if linea.upper() == "GPRO" and idx > 0:
+            country = lineas[idx - 1]
+            break
+
+    compacto = _compactar(bloque)
+    laps, lap_km = _extraer_laps(compacto)
+
+    return {
+        "round": ronda,
+        "track": track,
+        "country": country,
+        "date": _extraer_texto_despues("Date", compacto),
+        "distance_km": _extraer_num("Distance", compacto),
+        "laps": laps,
+        "lap_km": lap_km,
+        "avg_speed": _extraer_num("Avg speed", compacto),
+        "corners": _extraer_num("Corners", compacto, entero=True),
+        "pit_time_s": _extraer_num("PIT time", compacto),
+        "power": _extraer_num("Power", compacto, entero=True),
+        "handling": _extraer_num("Handling", compacto, entero=True),
+        "acceleration": _extraer_num("Acceleration", compacto, entero=True),
+        "downforce": _extraer_categoria("Downforce", compacto),
+        "overtaking": _extraer_categoria("Overtaking", compacto),
+        "rigidity": _extraer_categoria("Rigidity", compacto),
+        "fuel": _extraer_categoria("Fuel consumption", compacto),
+        "tyre": _extraer_categoria("Tyre wear", compacto),
+        "grip": _extraer_categoria("Grip", compacto),
+    }
+
+
+def _completar_con_fallback(circuito: dict[str, Any]) -> dict[str, Any]:
+    clave = str(circuito.get("track", "")).lower().strip()
+    fallback = FALLBACK_CIRCUITOS.get(clave)
+    if not fallback:
+        return circuito
+    completo = dict(fallback)
+    for k, v in circuito.items():
+        if v not in (None, ""):
+            completo[k] = v
+    return completo
 
 
 def obtener_calendario() -> list[dict[str, Any]]:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; GPROMIO/1.0)"}
     r = requests.get(URL_CALENDARIO, headers=headers, timeout=25)
     r.raise_for_status()
-    lineas = _normalizar_lineas(r.text)
 
-    circuitos = []
-    i = 0
-    while i < len(lineas):
-        if re.fullmatch(r"#\s*\d+", lineas[i]):
-            ronda = int(lineas[i].replace("#", "").strip())
-            bloque = lineas[i:i+45]
-            track = bloque[1] if len(bloque) > 1 else ""
-            country = bloque[3] if len(bloque) > 3 else ""
+    texto = _normalizar_texto(r.text)
 
-            date = _valor_despues(bloque, "Date", 0) or ""
-            distance = _extraer_float(_valor_despues(bloque, "Distance", 0))
-            laps_text = _valor_despues(bloque, "Laps", 0)
-            laps, lap_km = _extraer_laps(laps_text)
-            avg_speed = _extraer_float(_valor_despues(bloque, "Avg speed", 0))
-            corners = _extraer_float(_valor_despues(bloque, "Corners", 0))
-            pit_time = _extraer_float(_valor_despues(bloque, "PIT time", 0))
-            power = _extraer_float(_valor_despues(bloque, "Power", 0))
-            handling = _extraer_float(_valor_despues(bloque, "Handling", 0))
-            acceleration = _extraer_float(_valor_despues(bloque, "Acceleration", 0))
+    # Separa desde cada "# 1", "# 2", etc. hasta el próximo #.
+    matches = list(re.finditer(r"(?m)^#\s*(?:\d+|Test)\s*$", texto))
+    circuitos: list[dict[str, Any]] = []
 
-            bloque_texto = " ".join(bloque)
-            downforce = _buscar_categoria(bloque_texto, "Downforce")
-            overtaking = _buscar_categoria(bloque_texto, "Overtaking")
-            rigidity = _buscar_categoria(bloque_texto, "Rigidity")
-            fuel = _buscar_categoria(bloque_texto, "Fuel consumption")
-            tyre = _buscar_categoria(bloque_texto, "Tyre wear")
-            grip = _buscar_categoria(bloque_texto, "Grip")
+    for idx, match in enumerate(matches):
+        inicio = match.start()
+        fin = matches[idx + 1].start() if idx + 1 < len(matches) else len(texto)
+        bloque = texto[inicio:fin]
+        circuito = _parsear_bloque(bloque)
+        if circuito and circuito.get("track"):
+            circuitos.append(_completar_con_fallback(circuito))
 
-            circuitos.append({
-                "round": ronda,
-                "track": track,
-                "country": country,
-                "date": date,
-                "distance_km": distance,
-                "laps": laps,
-                "lap_km": lap_km,
-                "avg_speed": avg_speed,
-                "corners": int(corners) if corners is not None else None,
-                "pit_time_s": pit_time,
-                "power": int(power) if power is not None else None,
-                "handling": int(handling) if handling is not None else None,
-                "acceleration": int(acceleration) if acceleration is not None else None,
-                "downforce": downforce,
-                "overtaking": overtaking,
-                "rigidity": rigidity,
-                "fuel": fuel,
-                "tyre": tyre,
-                "grip": grip,
-            })
-            i += 1
-        i += 1
+    # Si por algún cambio de web no salió nada, al menos devolvemos la base local.
+    if not circuitos:
+        return list(FALLBACK_CIRCUITOS.values())
+
     return circuitos
-
-
-def _buscar_categoria(texto: str, etiqueta: str) -> str | None:
-    valores = ["Very low", "Low", "Medium", "High", "Very high", "Very easy", "Easy", "Normal", "Hard", "Very hard", "Soft"]
-    patron = etiqueta + r"\s+(" + "|".join(re.escape(v) for v in valores) + r")"
-    m = re.search(patron, texto, flags=re.IGNORECASE)
-    if not m:
-        return None
-    val = m.group(1)
-    # normaliza capitalización
-    for v in valores:
-        if val.lower() == v.lower():
-            return v
-    return val
 
 
 def buscar_circuitos(circuitos: list[dict[str, Any]], texto: str) -> list[dict[str, Any]]:
     q = texto.lower().strip()
     if not q:
         return circuitos
-    return [c for c in circuitos if q in str(c.get("track", "")).lower() or q in str(c.get("country", "")).lower()]
+    encontrados = [
+        c for c in circuitos
+        if q in str(c.get("track", "")).lower() or q in str(c.get("country", "")).lower()
+    ]
+    if not encontrados and q in FALLBACK_CIRCUITOS:
+        encontrados = [FALLBACK_CIRCUITOS[q]]
+    return encontrados
 
 
 def circuito_a_dataframe(circuito: dict[str, Any]) -> pd.DataFrame:
