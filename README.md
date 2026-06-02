@@ -1,21 +1,25 @@
 # GPROMIO - GPRO Manager Tools
 
-App en Streamlit para estimar combustible, stints y desgaste de neumáticos en GPRO.
-
-## Ejecutar local
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+App en Streamlit para calcular estrategia de GPRO usando como referencia el Excel `GPRO Version 6.xlsx`.
 
 ## Funciones
 
-- Carga de datos públicos del circuito.
-- Corrección manual de datos.
-- Cálculo editable de consumo por vuelta.
-- Cálculo editable de desgaste de neumáticos por stint.
-- Reparto automático o manual de vueltas por stint.
-- Combustible recomendado para Q2.
+- Selección de circuito desde base de datos.
+- Cálculo de consumo por vuelta.
+- Cálculo de combustible por stint.
+- Cálculo de desgaste de neumáticos por stint.
+- Stints editables.
+- Comparador automático de estrategias.
+- Datos de piloto/auto/riesgos editables.
 
-> Las fórmulas son aproximadas y calibrables. No replican fórmulas privadas de GPRO Tools.
+## Deploy
+
+En Streamlit Cloud:
+
+- Repository: `hmatias8626-debug/GPROMIO`
+- Branch: `main`
+- Main file path: `app.py`
+
+## Nota
+
+Los cálculos reproducen la lógica del Excel compartido por el usuario. No son fórmula oficial publicada por GPRO.
